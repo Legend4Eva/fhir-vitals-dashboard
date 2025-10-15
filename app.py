@@ -283,20 +283,27 @@ if 'fhir_data' in st.session_state:
         vital_types = sorted(df['vital_type'].unique())
         selected_vitals = st.sidebar.multiselect("Select Vital Signs", vital_types, default=vital_types)
         
+       min_date = df['date'].min().date()
+       max_date = df['date'].max().date()
+        
         date_range = st.sidebar.date_input(
             "Date Range",
-            value=(df['date'].min().date(), df['date'].max().date()),
-            min_value=df['date'].min().date(),
-            max_value=df['date'].max().date()
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
         )
         
         # Apply filters
         filtered_df = df[df['vital_type'].isin(selected_vitals)].copy()
         if len(date_range) == 2:
+            start_date, end_date = date_range
             filtered_df = filtered_df[
-                (filtered_df['date'].dt.date >= date_range[0]) & 
-                (filtered_df['date'].dt.date <= date_range[1])
+                (filtered_df['date'].dt.date >= start_date) & 
+                (filtered_df['date'].dt.date <= end_date)
             ]
+        elif len(date_range) == 1:
+            # If only one date selected, filter to that date
+            filtered_df = filtered_df[filtered_df['date'].dt.date == date_range[0]]
         
         # Summary metrics
         st.header("📊 Summary Statistics")
