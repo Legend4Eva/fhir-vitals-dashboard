@@ -6,6 +6,7 @@ from fhirclient.models.observation import Observation
 import json
 import os
 from datetime import datetime, timedelta
+import requests
 
 # --- Configuration ---
 FHIR_SERVER_URL = "https://hapi.fhir.org/baseR4"
@@ -33,32 +34,53 @@ def get_fhir_client():
 
 
 def fetch_patient_ids(client_obj):
-    # Try to fetch from FHIR server
+    """Fetch patient IDs using direct REST API call to avoid encoding issues."""
     try:
-        # Search for patients who have recent observations
-        search = Observation.where(struct={'_count': 50, 'date': f'gt{datetime.now().date() - timedelta(days=365)}'})
-        bundle = search.perform(client_obj.server)
+        # Direct REST API call instead of using fhirclient to avoid encoding issues
+        url = f"{FHIR_SERVER_URL}/Observation"
+        params = {
+            '_count': 50,
+            'date': f'gt{(datetime.now().date() - timedelta(days=365)).isoformat()}',
+            '_format': 'json'
+        }
         
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        
+        bundle_json = response.json()
         patient_ids = set()
-        for entry in bundle.entry:
-            if entry.resource and entry.resource.subject and entry.resource.subject.reference:
-                ref = entry.resource.subject.reference
-                if ref.startswith('Patient/'):
-                    patient_ids.add(ref.split('/')[-1])
+        
+        for entry in bundle_json.get('entry', []):
+            resource = entry.get('resource', {})
+            subject = resource.get('subject', {})
+            ref = subject.get('reference', '')
+            
+            if ref and isinstance(ref, str) and ref.startswith('Patient/'):
+                patient_id = str(ref.split('/')[-1])
+                # Basic validation to ensure it's a valid ID
+                if patient_id and len(patient_id) > 0:
+                    patient_ids.add(patient_id)
         
         if patient_ids:
-            st.success("Successfully fetched patient IDs from HAPI FHIR server.")
+            st.success(f"Successfully fetched {len(patient_ids)} patient IDs from HAPI FHIR server.")
             return sorted(list(patient_ids))
         else:
             st.warning("FHIR server returned no recent patient data. Falling back to local data.")
-            return ["synth-pat-1"] # Fallback ID
+            return ["synth-pat-1"]
+            
+    except requests.exceptions.Timeout:
+        st.warning("FHIR server request timed out. Falling back to local data.")
+        return ["synth-pat-1"]
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Network error connecting to FHIR server: {e}. Falling back to local data.")
+        return ["synth-pat-1"]
     except Exception as e:
-        st.error(f"Error fetching patient IDs from FHIR server: {e}. Falling back to local data.")
-        return ["synth-pat-1"] # Fallback ID
-
+        st.error(f"Error fetching patient IDs: {e}. Falling back to local data.")
+        return ["synth-pat-1"]
 
 
 def fetch_vitals_data(client_obj, patient_id):
+    """Fetch vitals data for a given patient ID."""
     # Fallback for synthetic data
     if patient_id == "synth-pat-1":
         try:
@@ -79,19 +101,42 @@ def fetch_vitals_data(client_obj, patient_id):
             st.error(f"Error loading local synthetic data: {e}")
             return []
 
-    # Try to fetch from FHIR server
+    # Try to fetch from FHIR server using direct REST API
     try:
-        # Fetch all vital signs for the patient
-        search = Observation.where(struct={'patient': patient_id, 'category': 'vital-signs', '_count': 1000})
-        bundle = search.perform(client_obj.server)
+        url = f"{FHIR_SERVER_URL}/Observation"
+        params = {
+            'patient': patient_id,
+            'category': 'vital-signs',
+            '_count': 1000,
+            '_format': 'json'
+        }
         
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        
+        bundle_json = response.json()
         observations = []
-        for entry in bundle.entry:
-            if entry.resource and entry.resource.resource_type == 'Observation':
-                observations.append(entry.resource)
+        
+        for entry in bundle_json.get('entry', []):
+            resource = entry.get('resource')
+            if resource and resource.get('resourceType') == 'Observation':
+                # Create an Observation object from the dict
+                obs = Observation(resource)
+                observations.append(obs)
+        
+        if observations:
+            st.success(f"Successfully fetched {len(observations)} observations for Patient/{patient_id}")
+        
         return observations
+        
+    except requests.exceptions.Timeout:
+        st.error(f"Request timed out while fetching vitals for Patient/{patient_id}")
+        return []
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error fetching vitals for Patient/{patient_id}: {e}")
+        return []
     except Exception as e:
-        st.error(f"Error fetching vitals for Patient/{patient_id} from FHIR server: {e}")
+        st.error(f"Error fetching vitals for Patient/{patient_id}: {e}")
         return []
 
 
