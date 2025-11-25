@@ -26,11 +26,12 @@ VITAL_SIGNS_MAP = {
 
 @st.cache_data(ttl=3600)
 def fetch_patient_ids():
-    """Fetch a list of patient IDs with recent observations from HAPI FHIR."""
+    """Fetch a list of patient IDs with recent vital-signs observations from HAPI FHIR."""
     try:
         params = {
             "_count": 50,
             "date": f"gt{datetime.now().date() - timedelta(days=365)}",
+            "category": "vital-signs",  # make sure these patients have vital signs
         }
         url = f"{FHIR_SERVER_URL}/Observation"
         resp = requests.get(url, params=params, timeout=10)
@@ -79,9 +80,9 @@ def fetch_vitals_data(patient_id):
 
     # Try to fetch from FHIR server
     try:
+        # Do NOT filter by category here – some valid vitals may be missing the category tag
         params = {
             "patient": patient_id,
-            "category": "vital-signs",
             "_count": 1000,
         }
         url = f"{FHIR_SERVER_URL}/Observation"
